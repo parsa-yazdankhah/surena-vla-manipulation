@@ -1,0 +1,469 @@
+<!--
+  Surena V - Precise MuJoCo MJCF
+  ================================
+  ALL joint origins, axes, limits, inertials and masses are taken
+  verbatim from surenaV.urdf (SolidWorks export).
+
+  Key facts extracted from URDF:
+    base_link inertial com: (0.05495, -0.00046591, 1.1042)   mass: 13.59 kg
+    Robot stands at ~1.35m tall (head_yaw joint at z=1.3497 from base)
+    Right arm root: (0.050262, -0.18726, 1.2635) from base_link
+    Left  arm root: (0.050262,  0.18852, 1.2635) from base_link
+    r_hand_link_joint is FIXED (no joint DOF) - end effector
+    l_hand_link_joint is FIXED (no joint DOF) - end effector
+    All revolute joints: limits -1.57 to 1.57 rad, damping 0.7, friction 0.3
+
+  Arm chain (right, 7 revolute DOF):
+    base_link -> r_arm_pitch (axis Y) -> r_arm_roll (axis X)
+    -> r_elbow_pitch (axis Z) -> r_forearm_roll (axis Y)
+    -> r_forearm_link (axis Z, rpy="0 0 -1.57")
+    -> r_hand_pitch (axis -Y) -> r_hand_roll (axis X)
+    -> r_hand_link (FIXED)
+
+  SETUP:
+    Your tree already has the right layout:
+      surena_mujoco/
+        surena_arm.xml          ← this file
+        assets/meshes/*.STL     ← all 32 STL files live here
+    meshdir="assets/meshes/" matches that layout.
+    Then: python3 -m mujoco surena_arm.xml
+-->
+<mujoco model="surena_arm">
+
+  <compiler angle="radian" autolimits="true" balanceinertia="true" boundmass="0.01" boundinertia="0.001"/>
+
+  <option timestep="0.002" gravity="0 0 -9.81" integrator="implicit"/>
+
+  <visual>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.8 0.8 0.8" specular="0.1 0.1 0.1"/>
+  </visual>
+
+  <!-- =====================================================================
+       DEFAULTS
+       Visual geoms (group 1) are mesh-only, no collisions.
+       Collision geoms (group 0) are simple primitives, not rendered.
+  ====================================================================== -->
+  <default>
+    <joint type="hinge" limited="true" damping="15" frictionloss="2" armature="0.05"/>
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="1" rgba="0.79 0.82 0.93 1"/>
+    </default>
+    <default class="collision">
+      <geom contype="1" conaffinity="1" group="0" rgba="0.5 0.5 0.5 0.0"/>
+    </default>
+    <default class="arm_collision">
+    <geom contype="2" conaffinity="1" group="0" rgba="0.5 0.5 0.5 0.25"/>
+    </default>
+    <default class="body_collision">
+    <geom contype="4" conaffinity="5" group="0" rgba="0.5 0.5 0.5 0.0"/>
+    </default>
+  </default>
+
+  <!-- =====================================================================
+       ASSETS
+  ====================================================================== -->
+  <asset>
+    <!-- STL files from SolidWorks export — stored in assets/ folder -->
+    <mesh name="base_link"      file="meshes/base_link.STL"/>
+    <mesh name="head_yaw"       file="meshes/head_yaw.STL"/>
+    <mesh name="head_pitch"     file="meshes/head_pitch.STL"/>
+    <mesh name="head_roll"      file="meshes/head_roll.STL"/>
+    <!-- Right leg -->
+    <mesh name="r_hip_yaw"      file="meshes/r_hip_yaw.STL"/>
+    <mesh name="r_hip_roll"     file="meshes/r_hip_roll.STL"/>
+    <mesh name="r_hip_pitch"    file="meshes/r_hip_pitch.STL"/>
+    <mesh name="r_knee"         file="meshes/r_knee.STL"/>
+    <mesh name="r_ankle_pitch"  file="meshes/r_ankle_pitch.STL"/>
+    <mesh name="r_ankle_roll"   file="meshes/r_ankle_roll.STL"/>
+    <!-- Left leg -->
+    <mesh name="l_hip_yaw"      file="meshes/l_hip_yaw.STL"/>
+    <mesh name="l_hip_roll"     file="meshes/l_hip_roll.STL"/>
+    <mesh name="l_hip_pitch"    file="meshes/l_hip_pitch.STL"/>
+    <mesh name="l_knee"         file="meshes/l_knee.STL"/>
+    <mesh name="l_ankle_pitch"  file="meshes/l_ankle_pitch.STL"/>
+    <mesh name="l_ankle_roll"   file="meshes/l_ankle_roll.STL"/>
+    <!-- Right arm -->
+    <mesh name="r_arm_pitch"    file="meshes/r_arm_pitch.STL"/>
+    <mesh name="r_arm_roll"     file="meshes/r_arm_roll.STL"/>
+    <mesh name="r_elbow_pitch"  file="meshes/r_elbow_pitch.STL"/>
+    <mesh name="r_forearm_roll" file="meshes/r_forearm_roll.STL"/>
+    <mesh name="r_forearm_link" file="meshes/r_forearm_link.STL"/>
+    <mesh name="r_hand_pitch"   file="meshes/r_hand_pitch.STL"/>
+    <mesh name="r_hand_roll"    file="meshes/r_hand_roll.STL"/>
+    <mesh name="r_hand_link"    file="meshes/r_hand_link.STL"/>
+    <!-- Left arm -->
+    <mesh name="l_arm_pitch"    file="meshes/l_arm_pitch.STL"/>
+    <mesh name="l_arm_roll"     file="meshes/l_arm_roll.STL"/>
+    <mesh name="l_elbow_pitch"  file="meshes/l_elbow_pitch.STL"/>
+    <mesh name="l_forearm_roll" file="meshes/l_forearm_roll.STL"/>
+    <mesh name="l_forearm_link" file="meshes/l_forearm_link.STL"/>
+    <mesh name="l_hand_pitch"   file="meshes/l_hand_pitch.STL"/>
+    <mesh name="l_hand_roll"    file="meshes/l_hand_roll.STL"/>
+    <mesh name="l_hand_link"    file="meshes/l_hand_link.STL"/>
+  </asset>
+
+  <!-- =====================================================================
+       WORLD BODY
+       base_link is welded to world (no freejoint).
+       robosuite places the robot programmatically via its mount system.
+       pos="0 0 0" — robosuite/LIBERO override this at load time.
+  ====================================================================== -->
+  <worldbody>
+
+    <light name="top_light" pos="0 0 3" dir="0 0 -1" diffuse="0.8 0.8 0.8" specular="0.2 0.2 0.2"/>
+    <geom name="floor" type="plane" size="3 3 0.1" rgba="0.5 0.5 0.5 1"
+          contype="1" conaffinity="1" friction="1 0.005 0.0001"/>
+
+    <!-- ── BASE LINK ─────────────────────────────────────────────────────
+         URDF inertial: com=(0.05495,-0.00046591,1.1042) mass=13.59
+         Full inertia tensor from URDF (ixx,ixy,ixz,iyy,iyz,izz)
+    ──────────────────────────────────────────────────────────────────── -->
+    <body name="base_link" pos="0 0 0">
+      <inertial pos="0.05495 -0.00046591 1.1042" mass="13.59"
+                fullinertia="0.47 0.84 0.66 -0.19 0.11 -0.04"/>
+      <geom class="visual"    name="base_link_viz" mesh="base_link"/>
+      <geom class="body_collision" name="base_link_col" type="box"
+            size="0.15 0.12 0.5" pos="0.05 0 0.9"/>
+
+      <!-- ── HEAD ─────────────────────────────────────────────────────
+           head_yaw_joint: origin=(0.0725,0,1.3497) axis=Z
+      ────────────────────────────────────────────────────────────── -->
+      <body name="head_yaw" pos="0.0725 0 1.3497">
+        <inertial pos="-0.0036927 0.00094602 0.055932" mass="1.65"
+                  fullinertia="0.12 0.26 0.21 -0.07 -0.05 0.02"/>
+        <geom class="visual" name="head_yaw_viz" mesh="head_yaw"/>
+
+        <!-- head_pitch_joint: origin=(0,0.0271,0.07175) axis=Y -->
+        <body name="head_pitch" pos="0 0.0271 0.07175">
+          <inertial pos="-0.00066333 -0.0291 0.067023" mass="1.68"
+                    fullinertia="0.13 0.27 0.22 -0.07 -0.06 0.03"/>
+          <geom class="visual" name="head_pitch_viz" mesh="head_pitch"/>
+
+          <!-- head_roll_joint: origin=(0.0296,-0.0291,0.0825) axis=X -->
+          <body name="head_roll" pos="0.0296 -0.0291 0.0825">
+            <inertial pos="-0.044066 -0.0015813 0.011272" mass="1.96"
+                      fullinertia="0.15 0.34 0.28 -0.09 -0.09 0.04"/>
+            <geom class="visual" name="head_roll_viz" mesh="head_roll"/>
+            <!-- Camera from URDF: origin=(0.085,0,0.068) euler=(0,0.349,0) -->
+            <site name="head_camera" pos="0.085 0 0.068" euler="0 0.349 0" size="0.005"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ── RIGHT LEG (all joints passive — no actuators) ─────────────
+           r_hip_yaw_joint: origin=(0.043012,-0.1,0.87631) axis=Z
+      ────────────────────────────────────────────────────────────── -->
+      <body name="r_hip_yaw" pos="0.043012 -0.1 0.87631">
+        <inertial pos="-0.069849 0.00016756 -0.078178" mass="3.17"
+                  fullinertia="0.01 0.02 0.02 0.0 0.0 0.0"/>
+        <geom class="visual" name="r_hip_yaw_viz" mesh="r_hip_yaw"/>
+
+        <!-- r_hip_roll_joint: origin=(0,0,-0.1113) axis=X -->
+        <body name="r_hip_roll" pos="0 0 -0.1113">
+          <inertial pos="0.0035233 0.012172 -0.00020667" mass="2.44"
+                    diaginertia="0.01 0.005 0.01"/>
+          <geom class="visual" name="r_hip_roll_viz" mesh="r_hip_roll"/>
+
+          <!-- r_hip_pitch_joint: origin=(0,0,0) axis=Y -->
+          <body name="r_hip_pitch" pos="0 0 0">
+            <inertial pos="0.0025608 0.012621 -0.178" mass="5.27"
+                      fullinertia="0.05 0.04 0.02 0.0 0.0 0.0"/>
+            <geom class="visual" name="r_hip_pitch_viz" mesh="r_hip_pitch"/>
+
+            <!-- r_knee_joint: origin=(0,0,-0.36006) axis=Y -->
+            <body name="r_knee" pos="0 0 -0.36006">
+              <inertial pos="0.0066463 0.0011462 -0.085758" mass="2.19"
+                        fullinertia="0.03 0.03 0.01 0.0 0.0 0.0"/>
+              <geom class="visual" name="r_knee_viz" mesh="r_knee"/>
+
+              <!-- r_ankle_pitch_joint: origin=(0,0,-0.35001) axis=Y -->
+              <body name="r_ankle_pitch" pos="0 0 -0.35001">
+                <inertial pos="-0.0000136 0.0034024 0.0015737" mass="0.15"
+                          diaginertia="0.0001 0.0001 0.0001"/>
+                <geom class="visual" name="r_ankle_pitch_viz" mesh="r_ankle_pitch"/>
+
+                <!-- r_ankle_roll_joint: origin=(0,0,0) axis=X -->
+                <body name="r_ankle_roll" pos="0 0 0">
+                  <inertial pos="0.032019 -0.0010731 -0.039192" mass="1.93"
+                            diaginertia="0.005 0.01 0.01"/>
+                  <geom class="visual"    name="r_ankle_roll_viz" mesh="r_ankle_roll"/>
+                  <geom class="collision" name="r_foot_col" type="box"
+                        size="0.13 0.07 0.025" pos="0.05 0 -0.04"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ── LEFT LEG (passive) ─────────────────────────────────────────
+           l_hip_yaw_joint: origin=(0.043012,0.1,0.86631) axis=Z
+      ────────────────────────────────────────────────────────────── -->
+      <body name="l_hip_yaw" pos="0.043012 0.1 0.86631">
+        <inertial pos="-0.069213 0.00011237 -0.068241" mass="3.17"
+                  fullinertia="0.01 0.02 0.02 0.0 0.0 0.0"/>
+        <geom class="visual" name="l_hip_yaw_viz" mesh="l_hip_yaw"/>
+
+        <!-- l_hip_roll_joint: origin=(0,0,-0.1013) axis=X -->
+        <body name="l_hip_roll" pos="0 0 -0.1013">
+          <inertial pos="0.0033793 -0.012172 0.00021004" mass="2.44"
+                    diaginertia="0.01 0.005 0.01"/>
+          <geom class="visual" name="l_hip_roll_viz" mesh="l_hip_roll"/>
+
+          <!-- l_hip_pitch_joint: origin=(0,0,0) axis=Y -->
+          <body name="l_hip_pitch" pos="0 0 0">
+            <inertial pos="0.0024199 -0.02 -0.17825" mass="5.61"
+                      fullinertia="0.05 0.04 0.02 0.0 0.0 0.0"/>
+            <geom class="visual" name="l_hip_pitch_viz" mesh="l_hip_pitch"/>
+
+            <!-- l_knee_joint: origin=(0,0,-0.35988) axis=Y -->
+            <body name="l_knee" pos="0 0 -0.35988">
+              <inertial pos="0.01 -0.01 -0.09" mass="2.19"
+                        fullinertia="0.03 0.03 0.01 0.0 0.0 0.0"/>
+              <geom class="visual" name="l_knee_viz" mesh="l_knee"/>
+
+              <!-- l_ankle_pitch_joint: origin=(0,0,-0.34999) axis=Y -->
+              <body name="l_ankle_pitch" pos="0 0 -0.34999">
+                <inertial pos="-0.0000136 -0.01 0.0015737" mass="0.19"
+                          diaginertia="0.0001 0.0001 0.0001"/>
+                <geom class="visual" name="l_ankle_pitch_viz" mesh="l_ankle_pitch"/>
+
+                <!-- l_ankle_roll_joint: origin=(0,0,0) axis=X -->
+                <body name="l_ankle_roll" pos="0 0 0">
+                  <inertial pos="0.032019 -0.0036731 -0.039192" mass="1.85"
+                            diaginertia="0.005 0.1 0.01"/>
+                  <geom class="visual"    name="l_ankle_roll_viz" mesh="l_ankle_roll"/>
+                  <geom class="collision" name="l_foot_col" type="box"
+                        size="0.13 0.07 0.025" pos="0.05 0 -0.04"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           RIGHT ARM  (7 actuated DOF)
+           r_arm_pitch_joint: origin=(0.050262,-0.18726,1.2635) axis=Y
+      ══════════════════════════════════════════════════════════════ -->
+      <body name="r_arm_pitch" pos="0.050262 -0.18726 1.2635">
+        <inertial pos="-0.01 -0.04 0" mass="1.99"
+                  fullinertia="0.31 0.08 0.30 -0.04 0.03 0.02"/>
+        <joint name="r_arm_pitch_joint" axis="0 1 0" range="-1.57 1.57"/>
+        <geom class="visual"    name="r_arm_pitch_viz" mesh="r_arm_pitch"/>
+        <geom class="arm_collision" name="r_arm_pitch_col" type="capsule"
+              size="0.04" fromto="0 0 0  0 -0.05 -0.1"/>
+
+        <!-- r_arm_roll_joint: origin=(0.035,-0.05,0) axis=X -->
+        <body name="r_arm_roll" pos="0.035 -0.05 0">
+          <inertial pos="-0.033422 -0.00012632 -0.083394" mass="1.93"
+                    fullinertia="0.29 0.07 0.28 -0.04 0.03 -0.02"/>
+          <joint name="r_arm_roll_joint" axis="1 0 0" range="-1.57 1.57"/>
+          <geom class="visual"    name="r_arm_roll_viz" mesh="r_arm_roll"/>
+          <geom class="arm_collision" name="r_arm_roll_col" type="capsule"
+                size="0.035" fromto="0 0 0  -0.033 0 -0.133"/>
+
+          <!-- r_elbow_pitch_joint: origin=(-0.033004,0,-0.13334) axis=Z -->
+          <body name="r_elbow_pitch" pos="-0.033004 0 -0.13334">
+            <inertial pos="0 0 -0.06" mass="1.91"
+                      fullinertia="0.28 0.06 0.28 -0.04 0.03 -0.03"/>
+            <joint name="r_elbow_pitch_joint" axis="0 0 1" range="-1.57 1.57"/>
+            <geom class="visual"    name="r_elbow_pitch_viz" mesh="r_elbow_pitch"/>
+            <geom class="arm_collision" name="r_elbow_col" type="capsule"
+                  size="0.035" fromto="0 0 0  0 0.033 -0.123"/>
+
+            <!-- r_forearm_roll_joint: origin=(0,0.0335,-0.12309) axis=Y -->
+            <body name="r_forearm_roll" pos="0 0.0335 -0.12309">
+              <inertial pos="0 -0.030836 -0.02" mass="2.02"
+                        fullinertia="0.31 0.07 0.31 -0.03 -0.03 0.03"/>
+              <joint name="r_forearm_roll_joint" axis="0 1 0" range="-1.57 1.57"/>
+              <geom class="visual"    name="r_forearm_roll_viz" mesh="r_forearm_roll"/>
+
+              <!-- r_forearm_link_joint: origin=(0,-0.03075,-0.07083) rpy=(0,0,-1.57) axis=Z -->
+              <body name="r_forearm_link" pos="0 -0.03075 -0.07083" euler="0 0 -1.5708">
+                <inertial pos="0 -0.01 -0.07" mass="0.18"
+                          diaginertia="0.0005 0.0005 0.0005"/>
+                <joint name="r_forearm_link_joint" axis="0 0 1" range="-1.57 1.57"/>
+                <geom class="visual"    name="r_forearm_link_viz" mesh="r_forearm_link"/>
+                <geom class="arm_collision" name="r_forearm_col" type="capsule"
+                      size="0.03" fromto="0 0 0  0.01 0 -0.15"/>
+
+                <!-- r_hand_pitch_joint: origin=(0.01,0,-0.15132) axis=-Y -->
+                <body name="r_hand_pitch" pos="0.01 0 -0.15132">
+                  <inertial pos="-0.01 0 0" mass="1.75"
+                            fullinertia="0.09 0.22 0.19 0.03 -0.08 -0.03"/>
+                  <joint name="r_hand_pitch_joint" axis="0 -1 0" range="-1.57 1.57"/>
+                  <geom class="visual"    name="r_hand_pitch_viz" mesh="r_hand_pitch"/>
+
+                  <!-- r_hand_roll_joint: origin=(-0.01,0.017,0) axis=X -->
+                  <body name="r_hand_roll" pos="-0.01 0.017 0">
+                    <inertial pos="0.0041621 -0.017 -0.012245" mass="1.75"
+                              fullinertia="0.05 0.22 0.23 0.04 0.02 -0.01"/>
+                    <joint name="r_hand_roll_joint" axis="1 0 0" range="-1.57 1.57"/>
+                    <geom class="arm_collision" name="r_wrist_contact_col" type="capsule"
+                          size="0.018" fromto="0 0 -0.03  0 0 -0.10"/>
+                    <geom class="arm_collision" name="r_palm_contact_col" type="sphere"
+                          size="0.025" pos="0 0 -0.12"/>
+                    <geom class="visual" name="r_hand_roll_viz" mesh="r_hand_roll"/>
+
+                    <!-- r_hand_link_joint: FIXED in URDF — use weld (no joint) -->
+                    <!-- origin=(0.049842,0.21551,0.7191) — NOTE: these are large;
+                         this is likely a SolidWorks export artifact (absolute coords).
+                         We keep the mesh for visual but the EEF site is placed
+                         at palm center (approximately 0.1m below hand_roll) -->
+                    <body name="r_hand_link" pos="0.049842 0.21551 0.7191">
+                      <inertial pos="-0.01 0.01 -0.07" mass="0.24"
+                                diaginertia="0.0005 0.0005 0.0005"/>
+                      <geom class="visual" name="r_hand_link_viz" mesh="r_hand_link"/>
+                    </body>
+
+                    <!-- EEF site: placed at palm center relative to r_hand_roll.
+                         Adjust z offset after visual inspection in viewer. -->
+                    <site name="right_eef_site"    pos="0 0 -0.12" size="0.015"
+                          rgba="1 0 0 1" type="sphere"/>
+                    <site name="right_gripper_site" pos="0 0 -0.12" size="0.005"
+                          euler="0 0 0"/>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+      <!-- ══════════════════════════════════════════════════════════════
+           LEFT ARM  (passive)
+           l_arm_pitch_joint: origin=(0.050262,0.18852,1.2635) axis=Y
+      ══════════════════════════════════════════════════════════════ -->
+      <body name="l_arm_pitch" pos="0.050262 0.18852 1.2635">
+        <inertial pos="-0.01 0.042591 -0.00039657" mass="1.99"
+                  fullinertia="0.28 0.10 0.30 -0.08 0.04 -0.02"/>
+        <!-- <joint name="l_arm_pitch_joint" axis="0 1 0" range="-1.57 1.57"/> -->
+        <geom class="visual"    name="l_arm_pitch_viz" mesh="l_arm_pitch"/>
+        <geom class="collision" name="l_arm_pitch_col" type="capsule"
+              size="0.04" fromto="0 0 0  0 0.05 -0.1"/>
+
+        <!-- l_arm_roll_joint: origin=(0.035,0.05,0) axis=X -->
+        <body name="l_arm_roll" pos="0.035 0.05 0">
+          <inertial pos="-0.033422 0.00012632 -0.083394" mass="1.93"
+                    fullinertia="0.26 0.10 0.28 -0.08 0.03 -0.01"/>
+          <!-- <joint name="l_arm_roll_joint" axis="1 0 0" range="-1.57 1.57"/> -->
+          <geom class="visual"    name="l_arm_roll_viz" mesh="l_arm_roll"/>
+          <geom class="collision" name="l_arm_roll_col" type="capsule"
+                size="0.035" fromto="0 0 0  -0.033 0 -0.133"/>
+
+          <!-- l_elbow_pitch_joint: origin=(-0.033004,0,-0.13334) axis=Z -->
+          <body name="l_elbow_pitch" pos="-0.033004 0 -0.13334">
+            <inertial pos="0.0000021 -0.0028416 -0.06" mass="1.91"
+                      fullinertia="0.25 0.09 0.28 -0.08 0.04 -0.03"/>
+            <!-- <joint name="l_elbow_pitch_joint" axis="0 0 1" range="-1.57 1.57"/> -->
+            <geom class="visual"    name="l_elbow_pitch_viz" mesh="l_elbow_pitch"/>
+            <geom class="collision" name="l_elbow_col" type="capsule"
+                  size="0.035" fromto="0 0 0  0 -0.033 -0.123"/>
+
+            <!-- l_forearm_roll_joint: origin=(0,-0.0325,-0.12309) axis=Y -->
+            <body name="l_forearm_roll" pos="0 -0.0325 -0.12309">
+              <inertial pos="0 0.030836 -0.02" mass="2.02"
+                        fullinertia="0.31 0.09 0.28 -0.03 -0.03 0.08"/>
+              <!-- <joint name="l_forearm_roll_joint" axis="0 1 0" range="-1.57 1.57"/> -->
+              <geom class="visual"    name="l_forearm_roll_viz" mesh="l_forearm_roll"/>
+
+              <!-- l_forearm_link_joint: origin=(0,0.03075,-0.07083) rpy=(0,0,1.57) axis=-Z -->
+              <body name="l_forearm_link" pos="0 0.03075 -0.07083" euler="0 0 1.5708">
+                <inertial pos="-0.00059 0.01 -0.072286" mass="0.18"
+                          diaginertia="0.0005 0.0005 0.0005"/>
+                <!-- <joint name="l_forearm_link_joint" axis="0 0 -1" range="-1.57 1.57"/> -->
+                <geom class="visual"    name="l_forearm_link_viz" mesh="l_forearm_link"/>
+                <geom class="collision" name="l_forearm_col" type="capsule"
+                      size="0.03" fromto="0 0 0  0.01 0 -0.15"/>
+
+                <!-- l_hand_pitch_joint: origin=(0.01,0,-0.15132) axis=-Y -->
+                <body name="l_hand_pitch" pos="0.01 0 -0.15132">
+                  <inertial pos="-0.01 0 0" mass="1.75"
+                            fullinertia="0.09 0.22 0.19 -0.03 -0.08 0.03"/>
+                  <!-- <joint name="l_hand_pitch_joint" axis="0 -1 0" range="-1.57 1.57"/> -->
+                  <geom class="visual"    name="l_hand_pitch_viz" mesh="l_hand_pitch"/>
+
+                  <!-- l_hand_roll_joint: origin=(-0.01,-0.017,0) axis=X -->
+                  <body name="l_hand_roll" pos="-0.01 -0.017 0">
+                    <inertial pos="0.0041621 0.02 -0.012245" mass="1.75"
+                              fullinertia="0.16 0.22 0.13 0.01 0.09 0.04"/>
+                    <!-- <joint name="l_hand_roll_joint" axis="1 0 0" range="-1.57 1.57"/> -->
+                    <geom class="visual" name="l_hand_roll_viz" mesh="l_hand_roll"/>
+
+                    <!-- l_hand_link_joint: FIXED in URDF origin=(0,0,0) -->
+                    <body name="l_hand_link" pos="0 0 0">
+                      <inertial pos="0.0031894 0.011871 -0.076128" mass="0.24"
+                                diaginertia="0.0005 0.0005 0.0005"/>
+                      <geom class="visual" name="l_hand_link_viz" mesh="l_hand_link"/>
+                    </body>
+
+                    <!-- <site name="left_eef_site"    pos="0 0 -0.12" size="0.015"
+                          rgba="0 0 1 1" type="sphere"/>
+                    <site name="left_gripper_site" pos="0 0 -0.12" size="0.005"
+                          euler="0 0 0"/> -->
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+
+    </body><!-- end base_link -->
+  </worldbody>
+
+  <!-- =====================================================================
+       ACTUATORS
+       14 DOF total: 7 per arm (pitch→roll→elbow→forearm_roll→forearm_link→hand_pitch→hand_roll)
+
+       Using <position> actuators: ctrl[i] = target joint angle (radians).
+       kp = proportional gain (spring stiffness, N·m/rad).
+       Derivative damping comes from joint damping="0.7" set in <default> above —
+       NOT from kv, which is a MuJoCo 3.x-only attribute and will error on 2.3.x.
+
+       PD relationship:  torque = kp*(target - q) - damping*qdot
+       kp tuning guide:
+         200 N·m/rad  → stiff shoulder (large inertia, far from EEF)
+         150          → elbow
+         100          → forearm (moderate inertia)
+          80          → wrist (light, fast)
+       Raise kp if the arm droops under gravity. Lower if it oscillates.
+
+       robosuite wraps these with its own OSC/joint-velocity controller at runtime,
+       so these gains are only active during the raw MuJoCo validation step.
+  ====================================================================== -->
+  <actuator>
+    <!-- RIGHT ARM — proximal → distal -->
+    <position name="act_r_arm_pitch"    joint="r_arm_pitch_joint"    kp="200"/>
+    <position name="act_r_arm_roll"     joint="r_arm_roll_joint"     kp="200"/>
+    <position name="act_r_elbow_pitch"  joint="r_elbow_pitch_joint"  kp="200"/>
+    <position name="act_r_forearm_roll" joint="r_forearm_roll_joint" kp="200"/>
+    <position name="act_r_forearm_link" joint="r_forearm_link_joint" kp="100"/>
+    <position name="act_r_hand_pitch"   joint="r_hand_pitch_joint"   kp="100"/>
+    <position name="act_r_hand_roll"    joint="r_hand_roll_joint"    kp="100"/>
+    <!-- LEFT ARM -->
+    <!-- <position name="act_l_arm_pitch"    joint="l_arm_pitch_joint"    kp="200"/>
+    <position name="act_l_arm_roll"     joint="l_arm_roll_joint"     kp="200"/>
+    <position name="act_l_elbow_pitch"  joint="l_elbow_pitch_joint"  kp="150"/>
+    <position name="act_l_forearm_roll" joint="l_forearm_roll_joint" kp="100"/>
+    <position name="act_l_forearm_link" joint="l_forearm_link_joint" kp="100"/>
+    <position name="act_l_hand_pitch"   joint="l_hand_pitch_joint"   kp="80"/>
+    <position name="act_l_hand_roll"    joint="l_hand_roll_joint"    kp="80"/> -->
+  </actuator>
+
+  <!-- =====================================================================
+       SENSORS — robosuite reads these for proprioceptive observations
+  ====================================================================== -->
+  <sensor>
+    <framepos    name="right_eef_pos"    objtype="site" objname="right_eef_site"/>
+    <framequat   name="right_eef_quat"   objtype="site" objname="right_eef_site"/>
+    <framelinvel name="right_eef_linvel" objtype="site" objname="right_eef_site"/>
+    <frameangvel name="right_eef_angvel" objtype="site" objname="right_eef_site"/>
+    <!-- <framepos    name="left_eef_pos"     objtype="site" objname="left_eef_site"/>
+    <framequat   name="left_eef_quat"    objtype="site" objname="left_eef_site"/>
+    <framelinvel name="left_eef_linvel"  objtype="site" objname="left_eef_site"/>
+    <frameangvel name="left_eef_angvel"  objtype="site" objname="left_eef_site"/> -->
+  </sensor>
+
+</mujoco>

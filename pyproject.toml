@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surena-vla-manipulation"
+version = "0.1.0"
+description = "SURENA V manipulation integration for MuJoCo, robosuite, LIBERO, and VLA policies"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+dependencies = []
+
+[project.scripts]
+surena-mujoco = "surena_vla.simulation.mujoco_runner:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+surena_vla = [
+    "assets/*.xml",
+    "assets/meshes/*.STL",
+    "assets/meshes/*.stl",
+]
