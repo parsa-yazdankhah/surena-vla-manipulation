@@ -139,7 +139,9 @@ def raw_step_with_bridge(env, ctrl, n_steps: int, record: bool = False,
     for k in range(n_steps):
         if k % steps_per_ctrl == 0:
             ctrl.bridge.control_callback()
-        ctrl._step_once(env=env, gripper_action=gripper_action)
+            if gripper_action is not None:
+                ctrl.sticky_update(gripper_action)
+        ctrl._step_once(env=env)
         if record and (k % render_stride == 0):
             frames.append(render_frame(env, camera_name=camera_name))
             eef_log.append(ctrl.get_eef_pose()[0].copy())

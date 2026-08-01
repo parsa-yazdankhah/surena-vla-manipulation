@@ -15,6 +15,10 @@ class OpenVLABridge:
 
     Action convention:
         [Δx, Δy, Δz, Δroll, Δpitch, Δyaw, gripper]
+
+    The seventh value is forwarded exactly as received. For the local
+    Bridge/RLDS MiniVLA checkpoint it is continuous in [0, 1], with 0=close and
+    1=open; sticky-hand normalization is handled separately.
     """
 
     DEFAULT_POS_SCALE = 0.01

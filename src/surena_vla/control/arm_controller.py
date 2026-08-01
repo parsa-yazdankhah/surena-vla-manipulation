@@ -74,32 +74,46 @@ class SurenaArmController:
 
     def enable_sticky_gripper(self, env,
                               object_name_filter: str | None = None,
+                              object_name_exclude=None,
                               attach_distance: float = 0.09,
-                              close_threshold: float = 0.5,
-                              release_threshold: float = 0.5,
-                              verbose: bool = True) -> StickyGripper:
+                              close_threshold: float = 0.65,
+                              release_threshold: float = 0.35,
+                              close_dwell_ticks: int = 2,
+                              release_dwell_ticks: int = 2,
+                              candidate_dwell_ticks: int = 2,
+                              filter_alpha: float | None = None,
+                              normalization_scale: float = -1.0,
+                              normalization_offset: float = 1.0,
+                              verbose: bool = False) -> StickyGripper:
         self._sticky_env = env
         self.sticky = StickyGripper(
             env=env,
             ctrl=self,
             object_name_filter=object_name_filter,
+            object_name_exclude=object_name_exclude,
             attach_distance=attach_distance,
             close_threshold=close_threshold,
             release_threshold=release_threshold,
+            close_dwell_ticks=close_dwell_ticks,
+            release_dwell_ticks=release_dwell_ticks,
+            candidate_dwell_ticks=candidate_dwell_ticks,
+            filter_alpha=filter_alpha,
+            normalization_scale=normalization_scale,
+            normalization_offset=normalization_offset,
             verbose=verbose,
         )
         return self.sticky
 
     def disable_sticky_gripper(self):
         if self.sticky is not None:
-            self.sticky.release()
+            self.sticky.disable()
         self.sticky = None
         self._sticky_env = None
 
     def sticky_update(self, gripper_action: float) -> dict:
         if self.sticky is None:
             return {"attached": False, "body_name": None}
-        return self.sticky.update(gripper_action)
+        return self.sticky.update_command(gripper_action)
 
     def sticky_enforce(self):
         if self.sticky is not None:
@@ -239,9 +253,6 @@ class SurenaArmController:
         One raw MuJoCo step with Surena bridge, optional sticky gripper, and
         optional gravity compensation. Used by all notebook execution helpers.
         """
-        if gripper_action is not None:
-            self.sticky_update(gripper_action)
-
         if self._gravity_comp_enabled:
             mujoco.mj_forward(self.model, self.data)
             self.apply_gravity_compensation()
@@ -251,8 +262,8 @@ class SurenaArmController:
         # Avoid stale applied forces on the next step.
         self.data.qfrc_applied[:] = 0.0
 
-        if gripper_action is not None:
-            self.sticky_enforce()
+        # State transitions never occur here: this is the physics-rate path.
+        self.sticky_enforce()
 
     def configure_vla_execution(self,
                                 kp_major: float = 1200.0,
@@ -318,7 +329,11 @@ class SurenaArmController:
         obj_log = []
 
         total_ticks = int(ctrl_ticks)
+        # Compatibility: qualify a supplied constant command once per outer
+        # controller tick, never once per raw physics substep.
         for tick in range(total_ticks):
+            if gripper_action is not None:
+                self.sticky_update(gripper_action)
             a = smoothstep((tick + 1) / max(total_ticks, 1))
             q_cmd = clamp_joints((1.0 - a) * q_start + a * q_goal)
             self.bridge.publish_arm_qpos(q_cmd)
@@ -338,7 +353,7 @@ class SurenaArmController:
         self.bridge.publish_arm_qpos(q_goal)
         self.bridge.control_callback()
         for s in range(steps_per_ctrl * int(hold_ticks)):
-            self._step_once(env=env, gripper_action=gripper_action)
+            self._step_once(env=env)
             if record and (s % render_stride == 0):
                 frames.append(render_frame(env, camera_name=camera_name))
                 eef_log.append(self.get_eef_pose()[0].copy())
@@ -360,6 +375,7 @@ class SurenaArmController:
         sticky_cfg = None
         if self.sticky is not None:
             sticky_cfg = self.sticky.config()
+        ik_cfg = self.ik.config
 
         tracking_cfg = self._tracking_cfg.copy() if self._tracking_cfg is not None else None
         gravity_enabled = bool(self._gravity_comp_enabled)
