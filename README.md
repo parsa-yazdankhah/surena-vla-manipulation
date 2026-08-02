@@ -461,7 +461,121 @@ python scripts/run_surena_mujoco.py --mode hold
 
 ---
 
-## 13. Dependency-maintenance rules
+## 12. Sticky SURENA hand
+
+The sticky gripper is an intentional command-level approximation of SURENA's
+fixed hand; it does not add fingers or substitute another robot's gripper. The
+local MiniVLA prediction path unnormalizes a continuous seven-dimensional
+action and leaves the seventh component in the Bridge/RLDS `[0, 1]` convention:
+`0=close`, `1=open`. The SURENA adapter preserves that raw value and continuously
+maps it to close strength with `normalized = 1 - raw` before qualification.
+
+Continuous command handling and discrete physical state are separate:
+
+```text
+raw -> affine normalization -> optional EMA -> hysteresis/dwell -> intent
+    -> OPEN / SEEKING / ATTACHED / RELEASE_PENDING
+```
+
+Defaults use a `0.65` close threshold and `0.35` release threshold. Values in
+between retain the previous intent. Close, release, and candidate dwell default
+to two controller updates. Filtering is disabled by default; when enabled,
+`filter_alpha` applies `y[t] = alpha*x[t] + (1-alpha)*y[t-1]`. Commands are not
+clipped or written back into the caller's action array.
+
+```python
+sticky = controller.enable_sticky_gripper(
+    env,
+    object_name_filter=None,
+    attach_distance=0.09,
+    close_threshold=0.65,
+    release_threshold=0.35,
+    close_dwell_ticks=2,
+    release_dwell_ticks=2,
+    candidate_dwell_ticks=2,
+    filter_alpha=None,
+)
+```
+
+Call `sticky_update(action[6])` once per controller/VLA command update. Call
+`sticky_enforce()` after raw MuJoCo steps; enforcement never advances dwell
+counters. `rebind(env)` retains configuration but clears attachment, candidate,
+filter, counters, and cached model IDs. Disabling also releases and resets.
+
+Candidate distance currently uses the freejoint body's origin rather than a
+geometry/contact distance. While attached, velocity is zeroed; release velocity
+inheritance is not modeled. These are limitations of the approximation, not a
+physical grasp model.
+
+---
+
+## 13. Hierarchical adaptive IK
+
+`SurenaIK` starts every request from the measured MuJoCo configuration, not a
+cached Mink iterate. DAQP is the primary solver. The normal path makes one
+strict full-pose attempt and returns immediately when it is feasible and within
+tolerance. Only a rejected candidate triggers this deterministic hierarchy:
+
+1. strict full pose from the measured configuration;
+2. full pose using previous accepted/commanded, home, or joint-center seeds and
+   compatible alternate solvers discovered through `qpsolvers`;
+3. progressively relaxed orientation (`0.15`, then `0.40` rad acceptance);
+4. position-dominant IK with a weak orientation preference;
+5. fully reevaluated line-search projection from current configuration toward
+   the best prior iterate;
+6. explicit `hold_current_no_safe_candidate` when nothing safely improves the
+   request.
+
+Each candidate records convergence separately from feasibility and acceptance.
+Non-finite values, model-evaluation failures, hard joint-limit violations,
+critical collision penetration, critical singularity, and a per-request joint
+step over `0.40` rad are hard failures. Feasible candidates use a dimensionless
+weighted score:
+
+```text
+4 (position_error / 0.02 m)^2
++ 1 (orientation_error / 0.20 rad)^2
++ 0.35 (joint_displacement / 0.35 rad)^2
++ 0.15 (second_difference / 0.20 rad)^2
++ 0.25 joint_limit_cost
++ 0.20 singularity_cost
++ 2.0 collision_cost
++ stage_penalty
+```
+
+The joint-limit term is a smooth hinge inside 15% of each model-provided joint
+range. Singularity uses the smallest singular value of the 6x7 controlled-arm
+EEF Jacobian. Collision scoring uses MuJoCo contacts involving robot geoms;
+palm contact with a movable freejoint object is treated as intentional, while
+fixture contact is not. MuJoCo's contact list does not provide comprehensive
+look-ahead collision avoidance, so this is candidate contact validation rather
+than a global collision planner.
+
+Online continuity retains only the last two accepted solutions and evaluates
+`||q[t] - 2 q[t-1] + q[t-2]||²`. The corresponding trajectory metric is the
+mean squared second difference. Projected candidates are completely rescored;
+joint clipping is not used as projection. Runtime application uses actuator
+targets unless the caller explicitly requests `teleport=True`.
+
+```python
+from surena_vla.control import RobustIKConfig
+
+ctrl.configure_robust_ik(RobustIKConfig(
+    maximum_joint_step=0.35,
+    max_total_attempts=10,
+))
+result = ctrl.move_eef_to(target_position, target_orientation)
+print(result["ik_stage"], result["solver"], result["score"])
+```
+
+`reset_ik()` clears continuity history. Hard controller `rebind(env)` rebuilds
+all model-dependent IDs, limits, Jacobian/collision metadata, and Mink objects
+while preserving the validated IK configuration. Attempts are bounded by stage,
+seed, iteration, and total-attempt limits; no threads or random seeds are used.
+
+---
+
+## 14. Dependency-maintenance rules
 
 - Keep `requirements.txt` as the pinned third-party environment.
 - Do not add local editable LIBERO or openvla-mini Git lines back into it.

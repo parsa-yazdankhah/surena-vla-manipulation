@@ -14,6 +14,7 @@ from .sticky_gripper import (
 )
 from .vla_adapter import OpenVLABridge, DeltaActionAdapter
 from .arm_controller import SurenaArmController
+from .robust_ik import IKCandidate, IKScoreWeights, IKStage, RobustIKConfig
 from .execution import (
     get_loop_params, render_frame, settle_with_env_step, reset_settle_rebind,
     smoothstep, execute_joint_target, raw_step_with_bridge, make_rgb_animation,

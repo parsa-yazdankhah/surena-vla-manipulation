@@ -13,6 +13,7 @@ from .joint_bridge import GazeboStyleController
 from .sticky_gripper import StickyGripper
 from .vla_adapter import OpenVLABridge
 from .mujoco_utils import clamp_joints
+from .robust_ik import RobustIKConfig
 
 class SurenaArmController:
     """
@@ -55,6 +56,16 @@ class SurenaArmController:
     def solve_ik_nearest(self, pos: np.ndarray, so3: mink.SO3,
                          verbose: bool = True, **kwargs) -> dict:
         return self.ik.solve_nearest_ik(pos, so3, verbose=verbose, **kwargs)
+
+    def configure_robust_ik(self, config: RobustIKConfig) -> SurenaIK:
+        """Replace IK policy while binding it to the current model and data."""
+        self.ik = SurenaIK(self.model, self.data, self.bridge,
+                           prefix=self.prefix, config=config)
+        self.vla = OpenVLABridge(self.ik)
+        return self.ik
+
+    def reset_ik(self) -> None:
+        self.ik.reset()
 
     def move_eef_to(self, pos: np.ndarray, so3: mink.SO3,
                     verbose: bool = True,
@@ -388,7 +399,8 @@ class SurenaArmController:
         self.data = mj_data
 
         self.bridge = GazeboStyleController(mj_model, mj_data, prefix=self.prefix, apply_home=False)
-        self.ik = SurenaIK(mj_model, mj_data, self.bridge, prefix=self.prefix)
+        self.ik = SurenaIK(mj_model, mj_data, self.bridge,
+                           prefix=self.prefix, config=ik_cfg)
         self.vla = OpenVLABridge(self.ik)
 
         self._arm_dof_ids_cache = None
