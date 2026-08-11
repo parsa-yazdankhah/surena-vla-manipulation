@@ -325,7 +325,8 @@ class SurenaArmController:
                              render_stride: int = 5,
                              camera_name: str = "agentview",
                              gripper_action: float | None = None,
-                             hold_ticks: int = 10):
+                             hold_ticks: int = 10,
+                             on_tick=None):
         mj_model = env.sim.model._model
         mj_data = env.sim.data._data
         _, _, _, derived_steps_per_ctrl = get_loop_params(env, verbose=False)
@@ -352,6 +353,8 @@ class SurenaArmController:
 
             for s in range(steps_per_ctrl):
                 self._step_once(env=env, gripper_action=gripper_action)
+                if on_tick is not None:
+                    on_tick(self, env)
 
                 global_step = tick * steps_per_ctrl + s
                 if record and (global_step % render_stride == 0):
@@ -365,6 +368,8 @@ class SurenaArmController:
         self.bridge.control_callback()
         for s in range(steps_per_ctrl * int(hold_ticks)):
             self._step_once(env=env)
+            if on_tick is not None:
+                on_tick(self, env)
             if record and (s % render_stride == 0):
                 frames.append(render_frame(env, camera_name=camera_name))
                 eef_log.append(self.get_eef_pose()[0].copy())

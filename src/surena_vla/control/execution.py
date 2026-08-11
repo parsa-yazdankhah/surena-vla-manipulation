@@ -102,7 +102,8 @@ def execute_joint_target(env, ctrl, q_goal, ctrl_ticks: int = 80,
                          render_stride: int = 5,
                          camera_name: str = "agentview",
                          gripper_action: float | None = None,
-                         hold_ticks: int = 10):
+                         hold_ticks: int = 10,
+                         on_tick=None):
     """
     Smoothly interpolates current arm joints to q_goal, sends targets through
     ctrl.bridge, raw-steps MuJoCo, and optionally records frames/EEF positions.
@@ -117,13 +118,15 @@ def execute_joint_target(env, ctrl, q_goal, ctrl_ticks: int = 80,
         camera_name=camera_name,
         gripper_action=gripper_action,
         hold_ticks=hold_ticks,
+        on_tick=on_tick,
     )
 
 
 def raw_step_with_bridge(env, ctrl, n_steps: int, record: bool = False,
                          render_stride: int = 5,
                          camera_name: str = "agentview",
-                         gripper_action: float | None = None):
+                         gripper_action: float | None = None,
+                         on_tick=None):
     """
     Advances MuJoCo directly while repeatedly applying the latest bridge command.
     Use this after IK/VLA has written custom actuator targets.
@@ -142,6 +145,8 @@ def raw_step_with_bridge(env, ctrl, n_steps: int, record: bool = False,
             if gripper_action is not None:
                 ctrl.sticky_update(gripper_action)
         ctrl._step_once(env=env)
+        if on_tick is not None:
+            on_tick(ctrl, env)
         if record and (k % render_stride == 0):
             frames.append(render_frame(env, camera_name=camera_name))
             eef_log.append(ctrl.get_eef_pose()[0].copy())

@@ -109,6 +109,10 @@ class GazeboStyleController:
 
     def get_arm_ctrl(self) -> np.ndarray:
         return np.array([self.data.ctrl[self._act_id[gi]] for gi in ARM_INDICES])
+    
+    def get_arm_actuator_ids(self) -> np.ndarray:
+        """MuJoCo actuator ids for the 7 arm actuators, in ARM_INDICES order."""
+        return np.array([self._act_id[gi] for gi in ARM_INDICES])
 
     def set_joint_pose(self, arm_q_7: np.ndarray):
         """Immediately command a 7-joint pose (bypasses queue — use in Jupyter)."""
