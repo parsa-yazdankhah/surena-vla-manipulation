@@ -15,6 +15,7 @@ IKCandidate = module.IKCandidate
 IKStage = module.IKStage
 RobustIKConfig = module.RobustIKConfig
 collision_penalty = module.collision_penalty
+elbow_out_penalty = module.elbow_out_penalty
 deduplicate_candidates = module.deduplicate_candidates
 joint_limit_proximity_cost = module.joint_limit_proximity_cost
 local_acceleration_cost = module.local_acceleration_cost
@@ -42,6 +43,8 @@ def test_configuration_invariants():
     with pytest.raises(ValueError):
         RobustIKConfig(collision_critical_distance=0.03,
                        collision_warning_distance=0.02)
+    with pytest.raises(ValueError):
+        RobustIKConfig(elbow_out_scale=0.0)
 
 
 def test_continuity_can_beat_slight_cartesian_advantage():
@@ -58,6 +61,33 @@ def test_infeasible_low_error_never_beats_feasible():
     safe = candidate(position_error=0.01)
     unsafe.score, safe.score = 0.0, 10.0
     assert select_best_candidate([unsafe, safe]) is safe
+
+
+def test_strict_candidate_pool_selects_best_scored_accepted_posture():
+    cfg = RobustIKConfig()
+    first = candidate(seed_name="actual_current", collision_cost=2.0)
+    alternative = candidate(seed_name="home", joint_displacement=0.15,
+                            collision_cost=0.0)
+    first.score = normalized_candidate_score(first, cfg)
+    alternative.score = normalized_candidate_score(alternative, cfg)
+
+    assert select_best_candidate([first, alternative]) is alternative
+
+
+def test_elbow_out_preference_is_soft_and_selects_equivalent_outward_solution():
+    cfg = RobustIKConfig()
+    inward = candidate(seed_name="inward")
+    outward = candidate(seed_name="outward")
+    inward.elbow_out_cost = elbow_out_penalty(
+        0.10, cfg.elbow_out_soft_boundary, cfg.elbow_out_scale)
+    outward.elbow_out_cost = elbow_out_penalty(
+        -0.50, cfg.elbow_out_soft_boundary, cfg.elbow_out_scale)
+    inward.score = normalized_candidate_score(inward, cfg)
+    outward.score = normalized_candidate_score(outward, cfg)
+
+    assert inward.feasible and inward.accepted
+    assert outward.elbow_out_cost == 0.0
+    assert select_best_candidate([inward, outward]) is outward
 
 
 def test_score_uses_explicit_normalization_scales():

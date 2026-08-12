@@ -28,6 +28,7 @@ class IKScoreWeights:
     joint_limit: float = 0.25
     singularity: float = 0.20
     collision: float = 2.0
+    elbow_out: float = 0.25
     stage: float = 0.05
 
     def __post_init__(self):
@@ -49,6 +50,9 @@ class RobustIKConfig:
     orientation_scale: float = 0.20
     joint_motion_scale: float = 0.35
     acceleration_scale: float = 0.20
+    elbow_out_preferred_roll: float = -0.50
+    elbow_out_soft_boundary: float = -0.20
+    elbow_out_scale: float = 0.30
     joint_limit_soft_margin: float = 0.15
     joint_limit_hard_tolerance: float = 1e-6
     singularity_warning_sigma: float = 0.04
@@ -74,6 +78,7 @@ class RobustIKConfig:
                     self.relaxed_position_tolerance, self.position_dominant_tolerance,
                     self.position_scale, self.orientation_scale,
                     self.joint_motion_scale, self.acceleration_scale,
+                    self.elbow_out_scale,
                     self.joint_limit_soft_margin, self.singularity_warning_sigma,
                     self.collision_warning_distance, self.maximum_joint_step)
         if any(value <= 0 or not math.isfinite(value) for value in positive):
@@ -84,6 +89,10 @@ class RobustIKConfig:
             raise ValueError("relaxed position tolerance must not exceed position-dominant tolerance")
         if self.collision_critical_distance > self.collision_warning_distance:
             raise ValueError("critical collision distance must not exceed warning distance")
+        if not math.isfinite(self.elbow_out_preferred_roll):
+            raise ValueError("preferred elbow-out shoulder roll must be finite")
+        if not math.isfinite(self.elbow_out_soft_boundary):
+            raise ValueError("elbow-out soft boundary must be finite")
         if self.singularity_critical_sigma > self.singularity_warning_sigma:
             raise ValueError("critical singularity sigma must not exceed warning sigma")
         if len(self.orientation_relaxation_costs) != len(self.orientation_relaxation_tolerances):
@@ -113,6 +122,7 @@ class IKCandidate:
     joint_limit_cost: float = math.inf
     singularity_cost: float = 0.0
     collision_cost: float = 0.0
+    elbow_out_cost: float = 0.0
     minimum_singular_value: float | None = None
     minimum_collision_distance: float | None = None
     hard_constraint_violations: tuple[str, ...] = ()
@@ -136,6 +146,7 @@ class IKCandidate:
             "joint_limit_cost": self.joint_limit_cost,
             "singularity_cost": self.singularity_cost,
             "collision_cost": self.collision_cost,
+            "elbow_out_cost": self.elbow_out_cost,
             "score": self.score,
             "solver_converged": self.solver_converged,
             "feasible": self.feasible,
@@ -185,6 +196,13 @@ def collision_penalty(minimum_distance: float | None, warning_distance: float) -
     return float(np.square(max(0.0, (warning - minimum_distance) / warning)))
 
 
+def elbow_out_penalty(shoulder_roll: float, soft_boundary: float,
+                      scale: float) -> float:
+    """Softly penalize inward (more positive) right shoulder-roll solutions."""
+    return float(np.square(max(
+        0.0, (float(shoulder_roll) - float(soft_boundary)) / float(scale))))
+
+
 def normalized_candidate_score(candidate: IKCandidate, config: RobustIKConfig) -> float:
     """Weighted dimensionless score; feasibility must be checked separately."""
     w = config.weights
@@ -196,6 +214,7 @@ def normalized_candidate_score(candidate: IKCandidate, config: RobustIKConfig) -
         w.joint_limit * candidate.joint_limit_cost,
         w.singularity * candidate.singularity_cost,
         w.collision * candidate.collision_cost,
+        w.elbow_out * candidate.elbow_out_cost,
         w.stage * max(0, int(candidate.stage) - 1),
     )
     return float(sum(terms)) if all(math.isfinite(x) for x in terms) else math.inf

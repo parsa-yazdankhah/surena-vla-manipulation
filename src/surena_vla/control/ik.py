@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections.abc import Sequence
 
 import mink
 import mujoco
@@ -16,7 +17,7 @@ from .mujoco_utils import mat_to_quat, _mj_id
 from .robust_ik import (
     IKCandidate, IKStage, RobustIKConfig, collision_penalty,
     deduplicate_candidates, joint_limit_proximity_cost,
-    local_acceleration_cost, normalized_candidate_score,
+    elbow_out_penalty, local_acceleration_cost, normalized_candidate_score,
     select_best_candidate, singularity_penalty,
 )
 
@@ -82,6 +83,8 @@ class SurenaIK:
 
     def _build_collision_metadata(self) -> dict:
         """Cache robot and intentional-contact geoms for contact classification."""
+        self._intentional_contact_body_names: tuple[str, ...] = ()
+        self._intentional_fixed_geoms: frozenset[int] = frozenset()
         robot, intentional = set(), set()
         for gid in range(self.model.ngeom):
             bid = int(self.model.geom_bodyid[gid])
@@ -91,6 +94,42 @@ class SurenaIK:
             if any(token in name for token in ("hand", "eef", "palm")):
                 intentional.add(gid)
         return {"robot": frozenset(robot), "intentional": frozenset(intentional)}
+
+    @property
+    def intentional_contact_body_names(self) -> tuple[str, ...]:
+        """Configured body-name candidates, retained so they can survive a rebind."""
+        return self._intentional_contact_body_names
+
+    def set_intentional_contact_bodies(self, body_names: Sequence[str]) -> None:
+        """Allow soft palm/hand contact with task-designated body hierarchies.
+
+        This deliberately operates at body (including descendant-body) scope,
+        because fixture assets do not expose stable, sufficiently fine geom names.
+        Such contacts still contribute collision cost; only hard rejection is
+        suppressed. Unresolved candidate names are silently ignored.
+        """
+        self._intentional_contact_body_names = tuple(str(name) for name in body_names)
+        body_ids = set()
+        for name in self._intentional_contact_body_names:
+            bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, name)
+            if bid >= 0:
+                body_ids.add(int(bid))
+                break
+
+        geoms = set()
+        for gid in range(self.model.ngeom):
+            bid = int(self.model.geom_bodyid[gid])
+            while bid > 0:
+                if bid in body_ids:
+                    geoms.add(gid)
+                    break
+                bid = int(self.model.body_parentid[bid])
+        self._intentional_fixed_geoms = frozenset(geoms)
+
+    def clear_intentional_contact_bodies(self) -> None:
+        """Clear the task body-level soft-contact allowance."""
+        self._intentional_contact_body_names = ()
+        self._intentional_fixed_geoms = frozenset()
 
     def _current_full_q(self) -> np.ndarray:
         return self.data.qpos.copy()
@@ -123,7 +162,11 @@ class SurenaIK:
                               orientation_cost=orientation_cost, lm_damping=1e-4)
         task.set_target(mink.SE3.from_rotation_and_translation(target_so3, target_pos))
         posture = mink.PostureTask(self.model, cost=posture_cost)
-        posture.set_target_from_configuration(conf)
+        posture_target = conf.q.copy()
+        posture_target[self._qadr[1]] = np.clip(
+            self.config.elbow_out_preferred_roll,
+            self.joint_lower[1], self.joint_upper[1])
+        posture.set_target(posture_target)
         for iteration in range(1, self.config.max_iterations + 1):
             err = task.compute_error(conf)
             pe, re = np.linalg.norm(err[:3]), np.linalg.norm(err[3:])
@@ -159,7 +202,9 @@ class SurenaIK:
                 continue
             # Ignore palm contact only when the other body is a movable
             # freejoint object; hand contact with a table/fixture remains risk.
-            if {g1, g2} & intentional:
+            intentional_contact = bool({g1, g2} & intentional)
+            other = None
+            if intentional_contact:
                 other = g2 if g1 in intentional else g1
                 body = int(self.model.geom_bodyid[other])
                 jadr, jnum = int(self.model.body_jntadr[body]), int(self.model.body_jntnum[body])
@@ -169,7 +214,11 @@ class SurenaIK:
                     continue
             distance = float(contact.dist)
             distances.append(distance)
-            hard |= distance < self.config.collision_critical_distance
+            intentional_fixed = bool(
+                intentional_contact and other in self._intentional_fixed_geoms
+            )
+            if not intentional_fixed:
+                hard |= distance < self.config.collision_critical_distance
         return (min(distances) if distances else None), hard
 
     def _acceptance(self, candidate: IKCandidate) -> bool:
@@ -207,6 +256,9 @@ class SurenaIK:
         )
         candidate.joint_limit_cost, _ = joint_limit_proximity_cost(
             q, self.joint_lower, self.joint_upper, self.config.joint_limit_soft_margin)
+        candidate.elbow_out_cost = elbow_out_penalty(
+            q[1], self.config.elbow_out_soft_boundary,
+            self.config.elbow_out_scale)
         q_full = self._full_q_with_arm_q(q, base_q=candidate.q_full)
         candidate.q_full = q_full
         try:
@@ -280,7 +332,7 @@ class SurenaIK:
                          seed_std: float | None = None,
                          max_reach: float = MAX_REACH,
                          verbose: bool = False) -> dict:
-        """Run stages in order and stop immediately on an accepted candidate.
+        """Run bounded stages and select the best candidate within each stage.
 
         Legacy random-seed arguments are accepted but intentionally ignored;
         fallback seeds are deterministic and bounded.
@@ -304,20 +356,29 @@ class SurenaIK:
             escalation = candidate.rejection_reason or "candidate not accepted"
             return None
 
-        # Stage 1: exactly one high-quality primary attempt.
-        primary = self._attempt(IKStage.FULL_POSE_PRIMARY,
-                                self.config.primary_solver, *seeds[0],
-                                target_pos, so3, 0.30,
-                                self.config.strict_orientation_tolerance, current_arm)
-        selected = add(primary)
+        # Stage 1: let a small deterministic strict pool compete on the full
+        # normalized score. This avoids committing to the first locally valid
+        # posture while keeping the normal path bounded and predictable.
+        strict_pool = []
+        for seed_name, seed in seeds[:self.config.max_seeds_per_stage]:
+            if len(candidates) >= self.config.max_total_attempts:
+                break
+            candidate = self._attempt(
+                IKStage.FULL_POSE_PRIMARY, self.config.primary_solver,
+                seed_name, seed, target_pos, so3, 0.30,
+                self.config.strict_orientation_tolerance, current_arm)
+            add(candidate)
+            strict_pool.append(candidate)
+        strict_best = select_best_candidate(strict_pool)
+        selected = strict_best if strict_best is not None and strict_best.accepted else None
 
         # Stage 2: full pose, deterministic secondary seeds and installed solvers.
         if selected is None and self.config.enable_alternates:
-            solvers = [self.config.primary_solver]
-            solvers += [name for name in self.config.alternate_solvers
-                        if name in self.available_solvers and name not in solvers]
+            solvers = [name for name in self.config.alternate_solvers
+                       if name in self.available_solvers and
+                       name != self.config.primary_solver]
             for solver in solvers:
-                for seed_name, seed in seeds[1:self.config.max_seeds_per_stage]:
+                for seed_name, seed in seeds[:self.config.max_seeds_per_stage]:
                     if len(candidates) >= self.config.max_total_attempts:
                         break
                     selected = add(self._attempt(
@@ -425,6 +486,7 @@ class SurenaIK:
             "joint_limit_cost": selected.joint_limit_cost,
             "singularity_cost": selected.singularity_cost,
             "collision_cost": selected.collision_cost,
+            "elbow_out_cost": selected.elbow_out_cost,
             "escalation_reason": escalation if selected.stage > IKStage.FULL_POSE_PRIMARY else None,
             "fallback_reason": None if ok else status,
             "attempt_count": len(candidates),
@@ -477,3 +539,7 @@ class SurenaIK:
             return mink.SO3(wxyz=quat)
         except Exception:
             return mink.SO3.from_wxyz(quat)
+
+    def collision_status(self) -> tuple[float | None, bool]:
+        """Classified collision state of the *live* simulation data"""
+        return self._collision_metrics(self.data)

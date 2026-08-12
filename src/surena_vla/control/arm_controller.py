@@ -392,6 +392,7 @@ class SurenaArmController:
         if self.sticky is not None:
             sticky_cfg = self.sticky.config()
         ik_cfg = self.ik.config
+        intentional_contact_bodies = self.ik.intentional_contact_body_names
 
         tracking_cfg = self._tracking_cfg.copy() if self._tracking_cfg is not None else None
         gravity_enabled = bool(self._gravity_comp_enabled)
@@ -406,6 +407,7 @@ class SurenaArmController:
         self.bridge = GazeboStyleController(mj_model, mj_data, prefix=self.prefix, apply_home=False)
         self.ik = SurenaIK(mj_model, mj_data, self.bridge,
                            prefix=self.prefix, config=ik_cfg)
+        self.ik.set_intentional_contact_bodies(intentional_contact_bodies)
         self.vla = OpenVLABridge(self.ik)
 
         self._arm_dof_ids_cache = None

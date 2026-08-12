@@ -512,11 +512,13 @@ physical grasp model.
 ## 13. Hierarchical adaptive IK
 
 `SurenaIK` starts every request from the measured MuJoCo configuration, not a
-cached Mink iterate. DAQP is the primary solver. The normal path makes one
-strict full-pose attempt and returns immediately when it is feasible and within
-tolerance. Only a rejected candidate triggers this deterministic hierarchy:
+cached Mink iterate. DAQP is the primary solver. The normal path evaluates a
+small, bounded pool of strict full-pose candidates from deterministic seeds and
+selects the lowest-scoring accepted posture. Only when that strict pool has no
+accepted candidate does it trigger the remaining deterministic hierarchy:
 
-1. strict full pose from the measured configuration;
+1. strict full pose from measured, recent, home, or joint-center seeds, bounded
+   by `max_seeds_per_stage`;
 2. full pose using previous accepted/commanded, home, or joint-center seeds and
    compatible alternate solvers discovered through `qpsolvers`;
 3. progressively relaxed orientation (`0.15`, then `0.40` rad acceptance);
@@ -540,6 +542,7 @@ weighted score:
 + 0.25 joint_limit_cost
 + 0.20 singularity_cost
 + 2.0 collision_cost
++ 0.25 elbow_out_cost
 + stage_penalty
 ```
 
@@ -547,9 +550,25 @@ The joint-limit term is a smooth hinge inside 15% of each model-provided joint
 range. Singularity uses the smallest singular value of the 6x7 controlled-arm
 EEF Jacobian. Collision scoring uses MuJoCo contacts involving robot geoms;
 palm contact with a movable freejoint object is treated as intentional, while
-fixture contact is not. MuJoCo's contact list does not provide comprehensive
-look-ahead collision avoidance, so this is candidate contact validation rather
-than a global collision planner.
+fixture contact remains a hard constraint unless explicitly designated by the
+task. MuJoCo's contact list does not provide comprehensive look-ahead collision
+avoidance, so this is candidate contact validation rather than a global
+collision planner.
+
+Tasks that deliberately press a fixed fixture may explicitly register that
+fixture with `set_intentional_contact_bodies()`. Palm/hand contact with the
+registered body remains in the collision cost, preferring shallow contact, but
+is excluded from hard collision rejection. The allowance is off by default and
+is body-level (including descendant bodies), rather than geom-level, because
+LIBERO fixture assets do not expose stable fine-grained geom names across
+variants.
+
+Redundant solutions receive a soft elbow-out preference without changing
+feasibility. The low-cost posture regularizer targets right shoulder roll at
+`-0.50 rad`, while candidate scoring applies a smooth inward-roll penalty above
+`-0.20 rad` with a `0.30 rad` scale. Cartesian accuracy and every existing hard
+constraint remain authoritative, so the solver may use an inward posture when
+the task requires it rather than falling back to `HOLD_CURRENT`.
 
 Online continuity retains only the last two accepted solutions and evaluates
 `||q[t] - 2 q[t-1] + q[t-2]||²`. The corresponding trajectory metric is the

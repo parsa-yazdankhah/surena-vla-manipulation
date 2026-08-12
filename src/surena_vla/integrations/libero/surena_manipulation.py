@@ -551,18 +551,21 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "short_key": "open_top_drawer", "domain": "kitchen", "profile": "cabinet_open_top",
         "bddl": "KITCHEN_SCENE5_close_the_top_drawer_of_the_cabinet.bddl",
         "instruction": "open the top drawer of the cabinet", "mode": "drawer",
+        "interaction_bodies": ["white_cabinet"],
         "success": _success_drawer("top_drawer", "open"),
     },
     "SurenaCloseBottomDrawer": {
         "short_key": "close_bottom_drawer", "domain": "kitchen", "profile": "cabinet_close_bottom",
         "bddl": "KITCHEN_SCENE5_close_the_top_drawer_of_the_cabinet.bddl",
         "instruction": "close the bottom drawer of the cabinet", "mode": "drawer",
+        "interaction_bodies": ["white_cabinet"],
         "success": _success_drawer("bottom_drawer", "closed"),
     },
     "SurenaCloseTopDrawer": {
         "short_key": "close_top_drawer", "domain": "kitchen", "profile": "cabinet_close_top",
         "bddl": "KITCHEN_SCENE5_close_the_top_drawer_of_the_cabinet.bddl",
         "instruction": "close the top drawer of the cabinet", "mode": "drawer",
+        "interaction_bodies": ["white_cabinet"],
         "success": _success_drawer("top_drawer", "closed"),
     },
     "SurenaPutKetchupInTopDrawer": {
@@ -611,18 +614,21 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "short_key": "turn_on_stove", "domain": "kitchen", "profile": "stove_turn_on",
         "bddl": "KITCHEN_SCENE3_turn_on_the_stove.bddl",
         "instruction": "turn on the stove", "mode": "articulation",
+        "interaction_bodies": ["stove"],
         "success": _success_articulation("stove_knob", "on"),
     },
     "SurenaCloseMicrowave": {
         "short_key": "close_microwave", "domain": "kitchen", "profile": "microwave_close",
         "bddl": "KITCHEN_SCENE6_close_the_microwave.bddl",
         "instruction": "close the microwave", "mode": "articulation",
+        "interaction_bodies": ["microwave"],
         "success": _success_articulation("microwave_door", "closed"),
     },
     "SurenaOpenMicrowave": {
         "short_key": "open_microwave", "domain": "kitchen", "profile": "microwave_open",
         "bddl": "KITCHEN_SCENE7_open_the_microwave.bddl",
         "instruction": "open the microwave", "mode": "articulation",
+        "interaction_bodies": ["microwave"],
         "success": _success_articulation("microwave_door", "open"),
     },
     "SurenaPutBookInLeftCaddy": {
@@ -1218,6 +1224,11 @@ MODE_DEFAULTS: Dict[str, Dict[str, Any]] = {
 def _preset_from_spec(class_name: str, spec: Mapping[str, Any]) -> Dict[str, Any]:
     mode = spec.get("mode", "pick_place")
     cfg = dict(MODE_DEFAULTS.get(mode, MODE_DEFAULTS["pick_place"]))
+    profile = PLACEMENT_PROFILES[spec["profile"]]
+    interaction_body_candidates = []
+    for label in spec.get("interaction_bodies", ()):
+        if label in profile.get("bodies", {}):
+            interaction_body_candidates.extend(BODY.get(label, ()))
     cfg.update({
         "env_class": class_name,
         "env_class_name": class_name,
@@ -1226,6 +1237,7 @@ def _preset_from_spec(class_name: str, spec: Mapping[str, Any]) -> Dict[str, Any
         "instruction": spec["instruction"],
         "mode": mode,
         "bddl_exists": os.path.exists(_bddl(spec["bddl"])),
+        "interaction_body_candidates": interaction_body_candidates,
     })
     if "drawer" in spec["instruction"]:
         if "top" in spec["instruction"]:
