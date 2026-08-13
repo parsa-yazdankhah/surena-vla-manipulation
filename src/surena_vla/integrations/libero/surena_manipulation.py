@@ -48,6 +48,7 @@ _BDDL_ROOT = get_bddl_root()
 LIBERO_PATH = str(_BDDL_ROOT.parent)
 BDDL_DIR = str(_BDDL_ROOT / "libero_90")
 ROBOT_PREFIX = "robot0_"
+SURENA_RIGHT_ARM_CONTACT_BIT = 2
 
 
 def _bddl(name_or_path: str) -> str:
@@ -255,6 +256,7 @@ BODY = {
     "wooden_cabinet": ["wooden_cabinet_1_main"],
     "stove": ["flat_stove_1_main", "stove_1_main"],
     "microwave": ["microwave_1_main"],
+    "microwave_door": ["microwave_1_microdoorroot", "microwave_1_door"],
     "caddy": ["desk_caddy_1_main", "caddy_1_main"],
     "shelf": ["wooden_two_layer_shelf_1_main", "wooden_shelf_1_main", "cabinet_shelf_1_main", "shelf_1_main"],
     "study_table": ["study_table"],
@@ -328,6 +330,9 @@ BASE_PROFILES: Dict[str, Dict[str, Any]] = {
 
     "microwave_base": {
         "home_q": _with_home(r_forearm_roll_joint=-1.42),
+        # LIBERO's microwave accepts only contact bit 1, while the Surena
+        # right arm emits bit 2. Extend affinity after model compilation.
+        "contact_compat_bodies": {"microwave": SURENA_RIGHT_ARM_CONTACT_BIT},
         "objects": {},
         "bodies": {
             "microwave": _body(BODY["microwave"], (-0.35, 0.18, Z_FURNITURE)),
@@ -398,8 +403,9 @@ PLACEMENT_PROFILES: Dict[str, Dict[str, Any]] = {
     "cabinet_put_ketchup_top": _deep_merge(BASE_PROFILES["cabinet_base"], {
         "joints": {"top_drawer": _joint(JNT["top_drawer"], DRAWER_OPEN)},
         "objects": {
-            "ketchup": _free(OBJ["ketchup"], (-0.35, -0.22, Z_KITCHEN_OBJ)),
-            "black_bowl_1": _free(OBJ["black_bowl_1"], (-0.22, -0.22, Z_KITCHEN_OBJ)),
+            "ketchup": _free(OBJ["ketchup"], (-0.29, -0.15, Z_KITCHEN_OBJ)),
+            "plate_1": _free(OBJ["plate_1"], (-0.32, 0.0, Z_KITCHEN_OBJ)),
+            "black_bowl_1": _free(OBJ["black_bowl_1"], (-0.40, -0.33, Z_KITCHEN_OBJ)),
         },
     }),
     "cabinet_put_bowl_top": _deep_merge(BASE_PROFILES["cabinet_base"], {
@@ -516,8 +522,12 @@ def _success_drawer(drawer_key: str, target: str) -> Dict[str, Any]:
     return {"type": "drawer", "joint_names": JNT[drawer_key], "target": target}
 
 
-def _success_articulation(joint_key: str, target: str) -> Dict[str, Any]:
-    return {"type": "articulation", "joint_names": JNT[joint_key], "target": target}
+def _success_articulation(joint_key: str, target: str,
+                          threshold: Optional[float] = None) -> Dict[str, Any]:
+    spec = {"type": "articulation", "joint_names": JNT[joint_key], "target": target}
+    if threshold is not None:
+        spec["threshold"] = float(threshold)
+    return spec
 
 
 def _success_near(obj_key: str, target: Union[str, Sequence[float]], threshold: float = 0.12,
@@ -621,14 +631,37 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "short_key": "close_microwave", "domain": "kitchen", "profile": "microwave_close",
         "bddl": "KITCHEN_SCENE6_close_the_microwave.bddl",
         "instruction": "close the microwave", "mode": "articulation",
-        "interaction_bodies": ["microwave"],
-        "success": _success_articulation("microwave_door", "closed"),
+        # Only door contact is intentional. Treating the entire appliance as
+        # intentional allowed IK to drive the palm into the fixed chassis.
+        "interaction_bodies": ["microwave_door"],
+        # Give the free-space approach modestly more authority than the shared
+        # articulation default. Guided contact steps are specified in metres
+        # below and are therefore independent of this scale.
+        "runner_overrides": {
+            "pos_scale": 0.040,
+            # Require the door to be within ~2.3 degrees of its closed limit,
+            # then hold that condition across two VLA steps before stopping.
+            "success_q_closed": -0.040,
+            "success_hold_steps": 2,
+        },
+        "contact_guidance": {
+            "type": "hinge_contact",
+            "joint_names": JNT["microwave_door"],
+            "fixture_body_names": BODY["microwave"],
+            "target_q": MICROWAVE_CLOSED,
+            "tangent_step": 0.012,
+            "contact_preload": 0.002,
+            "max_target_lag": 0.015,
+            "stall_steps": 5,
+            "recovery_retract_steps": 2,
+        },
+        "success": _success_articulation("microwave_door", "closed", threshold=-0.040),
     },
     "SurenaOpenMicrowave": {
         "short_key": "open_microwave", "domain": "kitchen", "profile": "microwave_open",
         "bddl": "KITCHEN_SCENE7_open_the_microwave.bddl",
         "instruction": "open the microwave", "mode": "articulation",
-        "interaction_bodies": ["microwave"],
+        "interaction_bodies": ["microwave_door"],
         "success": _success_articulation("microwave_door", "open"),
     },
     "SurenaPutBookInLeftCaddy": {
@@ -809,6 +842,7 @@ class SurenaSceneTaskMixin:
         self._place_free_joints(profile.get("objects", {}))
         self._place_bodies(profile.get("bodies", {}))
         self._set_scalar_joints(profile.get("joints", {}))
+        self._apply_contact_compatibility(profile.get("contact_compat_bodies", {}))
 
         model, data = self._model_data()
         mujoco.mj_forward(model, data)
@@ -930,6 +964,40 @@ class SurenaSceneTaskMixin:
             data.qpos[qadr] = float(spec["q"])
             data.qvel[dadr] = 0.0
 
+    def _apply_contact_compatibility(self, specs: Mapping[str, int]) -> None:
+        """Make selected fixture collision geoms accept Surena contact bits.
+
+        Only geoms whose collision affinity is already nonzero are modified,
+        so visual-only geoms remain non-colliding. Descendant bodies are
+        included because articulated parts such as the microwave door live
+        below the fixture's named root body.
+        """
+        model, _ = self._model_data()
+        for label, contact_bit in specs.items():
+            candidates = BODY.get(label, [label])
+            root_name = self._resolve_name(candidates, "body")
+            if root_name is None:
+                self._mark_missing("contact_compat_body", candidates)
+                continue
+            root_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, root_name)
+            bit = int(contact_bit)
+            compatible_geoms = 0
+            for gid in range(model.ngeom):
+                if int(model.geom_conaffinity[gid]) == 0:
+                    continue
+                bid = int(model.geom_bodyid[gid])
+                while bid > 0:
+                    if bid == root_id:
+                        model.geom_conaffinity[gid] = int(model.geom_conaffinity[gid]) | bit
+                        compatible_geoms += 1
+                        break
+                    bid = int(model.body_parentid[bid])
+            if compatible_geoms == 0:
+                raise RuntimeError(
+                    f"No physical collision geoms found below body {root_name!r}; "
+                    f"cannot enable Surena contact bit {bit}"
+                )
+
     # ------------------------------------------------------------------
     # Success evaluation
     # ------------------------------------------------------------------
@@ -984,9 +1052,9 @@ class SurenaSceneTaskMixin:
             if target == "off":
                 return q <= 0.25
             if target == "open":
-                return q <= -0.50
+                return q <= float(spec.get("threshold", -0.50))
             if target == "closed":
-                return q >= -0.25
+                return q >= float(spec.get("threshold", -0.25))
             return False
 
         if typ == "near":
@@ -1224,11 +1292,9 @@ MODE_DEFAULTS: Dict[str, Dict[str, Any]] = {
 def _preset_from_spec(class_name: str, spec: Mapping[str, Any]) -> Dict[str, Any]:
     mode = spec.get("mode", "pick_place")
     cfg = dict(MODE_DEFAULTS.get(mode, MODE_DEFAULTS["pick_place"]))
-    profile = PLACEMENT_PROFILES[spec["profile"]]
     interaction_body_candidates = []
     for label in spec.get("interaction_bodies", ()):
-        if label in profile.get("bodies", {}):
-            interaction_body_candidates.extend(BODY.get(label, ()))
+        interaction_body_candidates.extend(BODY.get(label, ()))
     cfg.update({
         "env_class": class_name,
         "env_class_name": class_name,
@@ -1239,6 +1305,9 @@ def _preset_from_spec(class_name: str, spec: Mapping[str, Any]) -> Dict[str, Any
         "bddl_exists": os.path.exists(_bddl(spec["bddl"])),
         "interaction_body_candidates": interaction_body_candidates,
     })
+    if "contact_guidance" in spec:
+        cfg["contact_guidance"] = copy.deepcopy(spec["contact_guidance"])
+    cfg.update(copy.deepcopy(spec.get("runner_overrides", {})))
     if "drawer" in spec["instruction"]:
         if "top" in spec["instruction"]:
             cfg["joint_hint"] = "top"

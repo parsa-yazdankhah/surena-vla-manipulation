@@ -13,6 +13,10 @@ from .sticky_gripper import (
     StickyGripper, StickyGripperConfig, StickyGripperState,
 )
 from .vla_adapter import OpenVLABridge, DeltaActionAdapter
+from .contact_guidance import (
+    ContactGuidanceConfig, HingeContactGuidance, clamp_target_lag,
+    hinge_arc_delta, hinge_tangent_delta,
+)
 from .arm_controller import SurenaArmController
 from .robust_ik import IKCandidate, IKScoreWeights, IKStage, RobustIKConfig
 from .execution import (
@@ -32,6 +36,8 @@ __all__ = [
     "HandIntent", "StickyGripperConfig", "StickyGripperState",
     "IKCandidate", "IKScoreWeights", "IKStage", "RobustIKConfig",
     "OpenVLABridge", "DeltaActionAdapter", "SurenaArmController",
+    "ContactGuidanceConfig", "HingeContactGuidance", "clamp_target_lag",
+    "hinge_arc_delta", "hinge_tangent_delta",
     "get_loop_params", "render_frame", "settle_with_env_step",
     "reset_settle_rebind", "smoothstep", "execute_joint_target",
     "raw_step_with_bridge", "make_rgb_animation", "plot_eef_log",

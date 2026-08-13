@@ -212,13 +212,18 @@ class SurenaIK:
                               for jid in range(jadr, jadr + jnum))
                 if movable:
                     continue
-            distance = float(contact.dist)
-            distances.append(distance)
             intentional_fixed = bool(
                 intentional_contact and other in self._intentional_fixed_geoms
             )
-            if not intentional_fixed:
-                hard |= distance < self.config.collision_critical_distance
+            # Expected palm-to-task contact must remain physically active in
+            # MuJoCo, but it must not make every useful contact posture lose
+            # the IK candidate competition. Non-designated chassis contact is
+            # still scored and hard-rejected normally.
+            if intentional_fixed:
+                continue
+            distance = float(contact.dist)
+            distances.append(distance)
+            hard |= distance < self.config.collision_critical_distance
         return (min(distances) if distances else None), hard
 
     def _acceptance(self, candidate: IKCandidate) -> bool:
