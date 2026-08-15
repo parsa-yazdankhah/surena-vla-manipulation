@@ -535,6 +535,11 @@ def _success_near(obj_key: str, target: Union[str, Sequence[float]], threshold: 
     return {"type": "near", "object_names": OBJ[obj_key], "target": target, "threshold": threshold, "z_min": z_min}
 
 
+def _success_in_site(obj_key: str, site_names: Sequence[str], margin: float = 0.005) -> Dict[str, Any]:
+    return {"type": "in_site", "object_names": OBJ[obj_key],
+            "site_names": list(site_names), "margin": float(margin)}
+
+
 def _success_on(obj_key: str, target_obj_key: str, threshold: float = 0.10, min_z_offset: float = -0.03) -> Dict[str, Any]:
     return {"type": "on", "object_names": OBJ[obj_key], "target_object_names": OBJ[target_obj_key], "threshold": threshold, "min_z_offset": min_z_offset}
 
@@ -582,7 +587,30 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "short_key": "put_ketchup_in_top_drawer", "domain": "kitchen", "profile": "cabinet_put_ketchup_top",
         "bddl": "KITCHEN_SCENE5_put_the_ketchup_in_the_top_drawer_of_the_cabinet.bddl",
         "instruction": "pick up the ketchup bottle and place it in the top drawer of the cabinet", "mode": "pick_place",
-        "success": _success_near("ketchup", (-0.33, 0.13, Z_KITCHEN_OBJ), threshold=0.18),
+        "success": _success_all(
+            _success_in_site("ketchup", ["white_cabinet_1_top_region"]),
+            _success_drawer("top_drawer", "open"),
+        ),
+        "runner_overrides": {
+            "object_name_filter": "ketchup_1_main",
+            "grasp_assist_body": "ketchup_1_main",
+            "grasp_approach_offset": (-0.02, -0.055, 0.02),
+            "grasp_approach_step": 0.010,
+            "grasp_close_distance": 0.063,
+            "sticky_attach_distance": 0.065,
+            "grasp_approach_tolerance": 0.002,
+            "grip_close_dwell_ticks": 1,
+            "grip_release_dwell_ticks": 1,
+            "grip_candidate_dwell_ticks": 1,
+            "grasp_place_site": "white_cabinet_1_top_region",
+            "grasp_transport_clearance": 0.180,
+            "grasp_lift_step": 0.030,
+            "grasp_transport_step": 0.015,
+            "grasp_place_tolerance": 0.015,
+            "grasp_lower_stall_epsilon": 0.0005,
+            "grasp_lower_stall_ticks": 3,
+            "use_libero_success_first": False,
+        },
     },
     "SurenaPutBlackBowlInTopDrawer": {
         "short_key": "put_black_bowl_in_top_drawer", "domain": "kitchen", "profile": "cabinet_put_bowl_top",
@@ -631,16 +659,9 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "short_key": "close_microwave", "domain": "kitchen", "profile": "microwave_close",
         "bddl": "KITCHEN_SCENE6_close_the_microwave.bddl",
         "instruction": "close the microwave", "mode": "articulation",
-        # Only door contact is intentional. Treating the entire appliance as
-        # intentional allowed IK to drive the palm into the fixed chassis.
         "interaction_bodies": ["microwave_door"],
-        # Give the free-space approach modestly more authority than the shared
-        # articulation default. Guided contact steps are specified in metres
-        # below and are therefore independent of this scale.
         "runner_overrides": {
             "pos_scale": 0.040,
-            # Require the door to be within ~2.3 degrees of its closed limit,
-            # then hold that condition across two VLA steps before stopping.
             "success_q_closed": -0.040,
             "success_hold_steps": 2,
         },
@@ -1065,6 +1086,17 @@ class SurenaSceneTaskMixin:
             dxy = float(np.linalg.norm(obj[:2] - tgt[:2]))
             z_min = spec.get("z_min")
             return dxy <= float(spec.get("threshold", 0.12)) and (z_min is None or obj[2] >= float(z_min))
+
+        if typ == "in_site":
+            obj = self._free_joint_pos(spec["object_names"])
+            site_name = self._resolve_name(spec["site_names"], "site")
+            if obj is None or site_name is None:
+                return False
+            model, data = self._model_data()
+            sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site_name)
+            local = data.site_xmat[sid].reshape(3, 3).T @ (obj - data.site_xpos[sid])
+            bounds = np.maximum(model.site_size[sid] - float(spec.get("margin", 0.0)), 0.0)
+            return bool(np.all(np.abs(local) <= bounds))
 
         if typ == "on":
             obj = self._free_joint_pos(spec["object_names"])

@@ -302,6 +302,10 @@ class EpisodeLogger:
             eef_rpy_before=rpy_before,
             eef_pos_after=np.asarray(eef_pos_after, dtype=float),
             eef_rpy_after=rpy_after,
+            commanded_target_pos=(np.asarray(commanded_target_pos, dtype=float)
+                                  if commanded_target_pos is not None else np.full(3, np.nan)),
+            commanded_target_quat=(np.asarray(commanded_target_quat, dtype=float)
+                                   if commanded_target_quat is not None else np.full(4, np.nan)),
             tracking_pos_err=tracking_pos_err if tracking_pos_err is not None else np.nan,
             tracking_rot_err=tracking_rot_err if tracking_rot_err is not None else np.nan,
             sticky_state=str(state or ""),
@@ -447,7 +451,8 @@ class EpisodeLogger:
                       "ik_candidate_trace_json", "sticky_state", "sticky_transition",
                       "sticky_transition_reason", "sticky_body_name")
         array_fields = ("raw_action", "exec_action", "eef_pos_before", "eef_rpy_before",
-                        "eef_pos_after", "eef_rpy_after")
+                        "eef_pos_after", "eef_rpy_after", "commanded_target_pos",
+                        "commanded_target_quat")
         skip = set(str_fields) | set(array_fields)
 
         for key in rows[0].keys():
