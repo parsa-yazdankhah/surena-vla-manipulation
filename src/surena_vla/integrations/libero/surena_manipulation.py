@@ -540,8 +540,9 @@ def _success_in_site(obj_key: str, site_names: Sequence[str], margin: float = 0.
             "site_names": list(site_names), "margin": float(margin)}
 
 
-def _success_on(obj_key: str, target_obj_key: str, threshold: float = 0.10, min_z_offset: float = -0.03) -> Dict[str, Any]:
-    return {"type": "on", "object_names": OBJ[obj_key], "target_object_names": OBJ[target_obj_key], "threshold": threshold, "min_z_offset": min_z_offset}
+def _success_on(obj_key: str, target_obj_key: str, threshold: float = 0.10, min_z_offset: float = -0.01, max_z_offset: float = 0.06) -> Dict[str, Any]:
+    return {"type": "on", "object_names": OBJ[obj_key], "target_object_names": OBJ[target_obj_key],
+            "threshold": threshold, "min_z_offset": min_z_offset, "max_z_offset": max_z_offset}
 
 
 def _success_stack(top_obj_key: str, bottom_obj_key: str, threshold: float = 0.09) -> Dict[str, Any]:
@@ -623,6 +624,27 @@ TASK_SPECS: Dict[str, Dict[str, Any]] = {
         "bddl": "KITCHEN_SCENE1_put_the_black_bowl_on_the_plate.bddl",
         "instruction": "pick up the black bowl and put it on the plate", "mode": "pick_place",
         "success": _success_on("black_bowl_1", "plate_1", threshold=0.11),
+        "runner_overrides": {
+            "object_name_filter": "akita_black_bowl_1_main",
+            "grasp_assist_body": "akita_black_bowl_1_main",
+            "grasp_close_distance": 0.090,
+            "sticky_attach_distance": 0.105,
+            "grasp_approach_offset": (-0.02,-0.055,0.07),
+            "grasp_approach_tolerance": 0.01,
+            "grasp_close_pose_tolerance": 0.02,
+            "grasp_approach_stall_epsilon": 0.0005,
+            "grasp_approach_stall_ticks": 2,
+            "grasp_approach_step": 0.012,
+            "grasp_close_step": 0.006,
+            "grasp_hover_clearance": 0.10,
+            "grasp_hover_xy_tolerance": 0.02,
+            "grasp_hover_step": 0.015,
+            "grasp_place_body": "plate_1_main",
+            "grasp_transport_clearance": 0.10,
+            "grasp_place_tolerance": 0.015,
+            "success_hold_steps": 2,
+            "use_libero_success_first": False,
+        },
     },
     "SurenaPutMiddleBlackBowlOnPlate": {
         "short_key": "put_middle_black_bowl_on_plate", "domain": "kitchen", "profile": "middle_bowl_on_plate",
@@ -1104,8 +1126,10 @@ class SurenaSceneTaskMixin:
             if obj is None or tgt is None:
                 return False
             dxy = float(np.linalg.norm(obj[:2] - tgt[:2]))
-            min_z_offset = float(spec.get("min_z_offset", -0.03))
-            return dxy <= float(spec.get("threshold", 0.10)) and obj[2] >= tgt[2] + min_z_offset
+            dz = float(obj[2] - tgt[2])
+            min_z_offset = float(spec.get("min_z_offset", -0.01))
+            max_z_offset = float(spec.get("max_z_offset", 0.06))
+            return (dxy <= float(spec.get("threshold", 0.10)) and min_z_offset <= dz <= max_z_offset)
 
         if typ == "stack":
             obj = self._free_joint_pos(spec["object_names"])
