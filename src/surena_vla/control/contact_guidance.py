@@ -77,6 +77,10 @@ class ContactGuidanceConfig:
     recovery_retract_steps: int = 2
     recovery_reacquire_step: float = 0.005
     recovery_reacquire_steps: int = 2
+    # Residual VLA / geometric-guidance blending. 
+    blend_alpha_follow: float = 0.65
+    blend_alpha_recovery: float = 0.85
+    blend_min_progress_fraction: float = 0.25
 
     @classmethod
     def from_mapping(cls, value: Mapping) -> "ContactGuidanceConfig":
@@ -93,6 +97,9 @@ class ContactGuidanceConfig:
             recovery_retract_steps=int(value.get("recovery_retract_steps", 2)),
             recovery_reacquire_step=float(value.get("recovery_reacquire_step", 0.005)),
             recovery_reacquire_steps=int(value.get("recovery_reacquire_steps", 2)),
+            blend_alpha_follow=float(value.get("blend_alpha_follow", 0.65)),
+            blend_alpha_recovery=float(value.get("blend_alpha_recovery", 0.85)),
+            blend_min_progress_fraction=float(value.get("blend_min_progress_fraction", 0.25)),
         )
 
 
@@ -127,6 +134,7 @@ class HingeContactGuidance:
         self.recovery_direction: np.ndarray | None = None
         self.last_mode = "approach"
         self.approach_recovery_remaining = 0
+        self.last_blend_info: dict | None = None
 
     def _resolve_joint(self, names: Sequence[str]) -> int:
         for name in names:
@@ -203,9 +211,70 @@ class HingeContactGuidance:
             bid = int(self.model.body_parentid[bid])
         return False
 
+    def _blend_guided_delta(self, ctrl, exec_action: np.ndarray, 
+                            guide_delta_world: np.ndarray, *, mode: str, 
+                            alpha: float,) -> np.ndarray:
+        """Blend a geometric Cartesian proposal into the VLA position action.
+
+        Orientation and gripper channels are deliberately left untouched.
+        The blend is performed in raw VLA position-action units so the base
+        signal and the geometric proposal are directly comparable.
+
+        A minimum-progress projection prevents a strong opposing VLA command
+        from reversing the desired hinge/recovery motion while preserving
+        orthogonal VLA variation.
+        """
+        base = np.asarray(exec_action, dtype=float).copy()
+        pos_scale = max(float(ctrl.vla.pos_scale), 1e-12)
+        guide_raw = np.asarray(guide_delta_world, dtype=float) / pos_scale
+
+        alpha = float(np.clip(alpha, 0.0, 1.0))
+        blended_raw = (1.0 - alpha) * base[:3] + alpha * guide_raw
+
+        guide_norm = float(np.linalg.norm(guide_raw))
+        floor_applied = False
+        progress_before = np.nan
+        progress_after = np.nan
+
+        if guide_norm > 1e-12:
+            guide_dir = guide_raw / guide_norm
+            progress_before = float(np.dot(blended_raw, guide_dir))
+            min_fraction = float(np.clip(
+                self.config.blend_min_progress_fraction, 0.0, 1.0
+            ))
+            min_progress = min_fraction * guide_norm
+            if progress_before < min_progress:
+                blended_raw = (
+                    blended_raw
+                    + (min_progress - progress_before) * guide_dir
+                )
+                floor_applied = True
+            progress_after = float(np.dot(blended_raw, guide_dir))
+
+        out = base.copy()
+        out[:3] = blended_raw
+
+        self.last_blend_info = {
+            "phase": mode,
+            "alpha": alpha,
+            "base_pos_raw": base[:3].copy(),
+            "guide_pos_raw": guide_raw.copy(),
+            "exec_pos_raw": blended_raw.copy(),
+            "progress_floor_applied": floor_applied,
+            "progress_before": progress_before,
+            "progress_after": progress_after,
+        }
+        return out
+
     def prepare_action(self, ctrl, exec_action: np.ndarray,
                        previous_ik_info: Mapping | None) -> tuple[np.ndarray, str]:
-        """Apply anti-windup and, after contact, hinge/recovery guidance."""
+        """Apply anti-windup and residual hinge/recovery guidance.
+
+        Free-space approach remains pure VLA.  Once geometric intervention is
+        needed, the geometric Cartesian proposal is blended with the VLA
+        position command instead of replacing it outright.
+        """
+        self.last_blend_info = None
         actual = self._eef_pos()
         ctrl.vla.target_pos = clamp_target_lag(
             ctrl.vla.target_pos, actual, self.config.max_target_lag)
@@ -220,11 +289,16 @@ class HingeContactGuidance:
                 self.recovery_direction = contact_retract.copy()
             if self.approach_recovery_remaining > 0 and self.recovery_direction is not None:
                 ctrl.vla.target_pos = actual.copy()
-                action = np.asarray(exec_action, dtype=float).copy()
                 delta = self.recovery_direction * self.config.recovery_retract_step
-                action[:3] = delta / float(ctrl.vla.pos_scale)
                 self.approach_recovery_remaining -= 1
                 self.last_mode = "approach_retract"
+                action = self._blend_guided_delta(
+                    ctrl,
+                    exec_action,
+                    delta,
+                    mode=self.last_mode,
+                    alpha=self.config.blend_alpha_recovery,
+                )
                 return action, self.last_mode
             self.last_mode = "approach"
             return np.asarray(exec_action, dtype=float).copy(), self.last_mode
@@ -232,7 +306,6 @@ class HingeContactGuidance:
         # Contact mode is referenced to the live pose every step; unreachable
         # deltas therefore cannot accumulate behind the fixture.
         ctrl.vla.target_pos = actual.copy()
-        action = np.asarray(exec_action, dtype=float).copy()
         hinge, axis = self._hinge_world()
         direction = self.config.target_q - self.joint_q
         delta = hinge_arc_delta(
@@ -268,7 +341,18 @@ class HingeContactGuidance:
         else:
             self.last_mode = "hinge_follow"
 
-        action[:3] = delta / float(ctrl.vla.pos_scale)
+        alpha = (
+            self.config.blend_alpha_follow
+            if self.last_mode == "hinge_follow"
+            else self.config.blend_alpha_recovery
+        )
+        action = self._blend_guided_delta(
+            ctrl,
+            exec_action,
+            delta,
+            mode=self.last_mode,
+            alpha=alpha,
+        )
         return action, self.last_mode
 
     def observe_execution(self) -> None:

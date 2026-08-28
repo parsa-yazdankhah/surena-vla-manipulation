@@ -254,7 +254,8 @@ class EpisodeLogger:
                       eef_pos_after, eef_quat_after, vla_inference_ms: float,
                       execution_wall_ms: float, sticky_status: dict | None,
                       success: bool, native_success: bool, scalar_success: bool,
-                      commanded_target_pos=None, commanded_target_quat=None):
+                      commanded_target_pos=None, commanded_target_quat=None,
+                      guidance_phase=None, guidance_alpha=None):
         step_idx = self._current_vla_step_idx
         rpy_before = quat_wxyz_to_euler(eef_quat_before)
         rpy_after = quat_wxyz_to_euler(eef_quat_after)
@@ -311,16 +312,18 @@ class EpisodeLogger:
             sticky_state=str(state or ""),
             sticky_transition=str(sticky_status.get("transition") or ""),
             sticky_transition_reason=str(sticky_status.get("transition_reason") or ""),
-            sticky_raw_command=float(sticky_status.get("raw_command", np.nan) or np.nan),
-            sticky_normalized_command=float(sticky_status.get("normalized_command", np.nan) or np.nan),
-            sticky_filtered_command=float(sticky_status.get("filtered_command", np.nan) or np.nan),
+            sticky_raw_command=(float(sticky_status["raw_command"]) if sticky_status.get("raw_command") is not None else np.nan),
+            sticky_normalized_command=(float(sticky_status["normalized_command"]) if sticky_status.get("normalized_command") is not None else np.nan),
+            sticky_filtered_command=(float(sticky_status["filtered_command"]) if sticky_status.get("filtered_command") is not None else np.nan),
             sticky_attached=bool(sticky_status.get("attached", False)),
             sticky_body_name=str(sticky_status.get("body_name") or ""),
-            sticky_candidate_distance=float(sticky_status.get("candidate_distance", np.nan) or np.nan),
+            sticky_candidate_distance=(float(sticky_status["candidate_distance"]) if sticky_status.get("candidate_distance") is not None else np.nan),            
             success=bool(success),
             native_success=bool(native_success),
             scalar_success=bool(scalar_success),
             keyframe_index=len(self._keyframes),
+            guidance_phase=str(guidance_phase or ""),
+            guidance_alpha=(float(guidance_alpha) if guidance_alpha is not None else np.nan),
         )
         self._step_rows.append(row)
         self._keyframes.append(encode_jpeg(keyframe, quality=self.jpeg_quality))
@@ -449,7 +452,8 @@ class EpisodeLogger:
         str_fields = ("ik_stage", "ik_solver", "ik_seed", "ik_status",
                       "ik_escalation_reason", "ik_fallback_reason",
                       "ik_candidate_trace_json", "sticky_state", "sticky_transition",
-                      "sticky_transition_reason", "sticky_body_name")
+                      "sticky_transition_reason", "sticky_body_name",
+                      "guidance_phase",)
         array_fields = ("raw_action", "exec_action", "eef_pos_before", "eef_rpy_before",
                         "eef_pos_after", "eef_rpy_after", "commanded_target_pos",
                         "commanded_target_quat")
